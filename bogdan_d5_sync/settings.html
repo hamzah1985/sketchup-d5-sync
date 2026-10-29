@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font:13px system-ui,sans-serif;margin:18px;color:#222;background:#f7f7f7}label{display:block;margin:12px 0 5px}input[type=text]{width:100%;box-sizing:border-box}input,select,button{font:inherit;padding:6px;border:1px solid #bbb;border-radius:4px}button{cursor:pointer;background:white}.path{display:flex;gap:5px}.path input{flex:1;min-width:0}.switch{display:flex;align-items:center;gap:6px}.row{display:flex;gap:14px}.row label{flex:1}.row input{width:95%;box-sizing:border-box}small{display:block;color:#555;margin-top:4px;line-height:1.4}#status{min-height:34px;margin:12px 0;color:#254f65}footer{display:flex;justify-content:flex-end}footer button{background:#254f65;color:white}
+</style></head><body>
+<label>Texture folder</label><div class="path"><input id="texture_root" type="text" aria-label="Texture folder"><button onclick="sketchup.browse('texture_root')">Browse…</button></div><small>Blank: one companion folder beside each SKP. Choose a folder to collect all exported textures there. Existing textures are kept; the next sync extracts missing embedded images.</small>
+<label>D5 Render installation folder</label><div class="path"><input id="d5_path" type="text" aria-label="D5 Render installation folder"><button onclick="sketchup.browse('d5_path')">Browse…</button></div><small>Blank: automatic. Custom folder must contain d5_launcher.exe.</small>
+<label class="switch"><input id="automatic" type="checkbox">Automatic model and material updates</label>
+<label class="switch"><input id="defer_nested" type="checkbox">Use scoped updates inside groups/components</label>
+<label class="switch"><input id="camera" type="checkbox">Follow SketchUp camera</label>
+<div class="row"><label>Camera rate (Hz)<input id="camera_fps" type="number" min="15" max="60"></label><label>Update delay (ms)<input id="delay_ms" type="number" min="250" max="5000"></label></div>
+<label for="opacity">Material transparency</label><select id="opacity"><option value="opaque">Opaque — preserve previous behavior</option><option value="sketchup">SketchUp material opacity — experimental</option></select><small>Basic material opacity only. Texture alpha cutouts and physically accurate glass are not yet verified. D5 exposure and lighting remain in D5.</small>
+<p id="status" role="status"></p><footer><button onclick="saveSettings()">Save and Disconnect</button></footer>
+<script>
+var keys=['texture_root','d5_path','automatic','defer_nested','camera','camera_fps','delay_ms','opacity'];
+function loadSettings(values,message){keys.forEach(function(key){var el=document.getElementById(key);if(el.type==='checkbox'){el.checked=values[key];}else{el.value=values[key];}});document.getElementById('status').textContent=message;}
+function setPath(key,value){document.getElementById(key).value=value;}
+function saveSettings(){var values={};keys.forEach(function(key){var el=document.getElementById(key);values[key]=el.type==='checkbox'?el.checked:el.value;});sketchup.save(JSON.stringify(values));}
+window.onload=function(){sketchup.ready();};
+</script></body></html>
