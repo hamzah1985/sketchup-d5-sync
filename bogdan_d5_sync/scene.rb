@@ -93,13 +93,16 @@ module BogdanD5Sync
       entities.each do |entity|
         next unless entity.is_a?(Sketchup::Drawingelement) && visible?(entity, path)
         if entity.is_a?(Sketchup::Face)
-          material = entity.material || inherited
+          # SketchUp can show paint on a reversed face. Keep front/container
+          # priority, then export back-only paint facing its painted side.
+          back = !entity.material && !inherited && !!entity.back_material
+          material = entity.material || inherited || entity.back_material
           mid = material_key(material)
           bucket = buckets[mid] ||= {'id' => (ids + [mid]).join('/'),
             'name' => ids.empty? ? 'Model geometry' : 'Component geometry',
             'vertices' => [], 'normals' => [], 'triangles' => [], 'uvs' => [],
             'material_id' => mid, 'transform' => IDENTITY}
-          append_face(bucket, entity, transform, material)
+          append_face(bucket, entity, transform, material, back)
         elsif entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
           walk(entity.definition.entities, transform * entity.transformation,
                ids + [entity.persistent_id.to_s], entity.material || inherited, path + [entity])
@@ -140,12 +143,13 @@ module BogdanD5Sync
       key
     end
 
-    def append_face(bucket, face, transform, material)
+    def append_face(bucket, face, transform, material, back = false)
       mesh = face.mesh(5)
       inverse = transform.inverse.to_a
       mirrored = transform.xaxis.cross(transform.yaxis).dot(transform.zaxis) < 0
       offset = bucket['vertices'].length
-      helper = face.get_UVHelper(true, false) if material && material.texture && face.material
+      painted = back ? face.back_material : face.material
+      helper = face.get_UVHelper(!back, back) if material && material.texture && painted
       points = mesh.points
       points.each_with_index do |point, index|
         bucket['vertices'] << point.transform(transform).to_a.map { |n| n.to_f * INCH_TO_METRE }
@@ -156,9 +160,9 @@ module BogdanD5Sync
                   inverse[8]*nx + inverse[9]*ny + inverse[10]*nz]
         length = Math.sqrt(result.inject(0.0) { |sum, n| sum + n*n })
         raise ArgumentError, 'A face has a zero normal.' if length < 1.0e-12
-        bucket['normals'] << result.map { |n| n / length }
+        bucket['normals'] << result.map { |n| (back ? -n : n) / length }
         if helper
-          uvq = helper.get_front_UVQ(point)
+          uvq = back ? helper.get_back_UVQ(point) : helper.get_front_UVQ(point)
           q = uvq.z.abs > 1.0e-12 ? uvq.z : 1.0
           # SketchUp UVQ is bottom-up. The bridge's texture convention is
           # top-down; convert here, including projective Q, once per corner.
@@ -176,7 +180,7 @@ module BogdanD5Sync
         indices = polygon.map { |i| offset + i.abs - 1 }
         (1...(indices.length - 1)).each do |i|
           triangle = [indices[0], indices[i], indices[i+1]]
-          triangle.reverse! if mirrored
+          triangle.reverse! if mirrored != back
           bucket['triangles'] << triangle
         end
       end

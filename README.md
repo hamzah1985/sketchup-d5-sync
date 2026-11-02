@@ -9,6 +9,15 @@ LiveSync for Blender native module. Blender stays closed during sync.
 D5 Render, a matching Python runtime and NumPy must already be installed.
 No vendor binaries or installers are redistributed.
 
+## Material sync example
+
+SketchUp 2027 on the left and D5 Render on the right after syncing the same
+tennis court on 2 November 2026. The court's two green materials and white lines
+now appear in D5 after fixing export of back-only face paint. The SketchUp model
+was not modified or saved by the connector.
+
+![SketchUp and D5 Render side by side, showing the tennis court's green materials and white court lines after the back-face material fix](docs/images/sketchup-d5-tennis-material-sync.jpg)
+
 ## Install from this repository
 
 This is a source distribution, not a self-contained installer or an official D5
@@ -76,7 +85,11 @@ overrides between those identities is not implemented. Preserve the old project
 and test the new identity in a fresh project first.
 
 The exporter reads the full model in world coordinates, including component
-placements, visibility, inherited colors, front-side paint and smooth normals.
+placements, visibility, inherited colors, face paint and smooth normals.
+Materials use front paint, then inherited container paint, then back paint.
+Back-only paint exports with reversed normals/winding and back-side UVQ, without
+changing the source faces. Different front/back paints still use the front paint;
+separate materials on both sides of one face are not exported.
 It does not explode components, paint faces, add attributes or change geometry.
 Each exported mesh is rebased to a nearby local origin with its placement in
 a separate transform, preserving small triangles far from the model origin.
@@ -84,7 +97,7 @@ The worker omits triangles that collapse at native float32 precision, retaining
 the rest of the scene. Connection Status reports the skipped triangle count.
 Malformed indices and non-finite source data still produce an error.
 Unpainted faces become white. Mirrored winding and inverse-transpose normals
-retain nonuniform scale. Explicit front texture UVQ is sampled and embedded
+retain nonuniform scale. Explicit face texture UVQ is sampled and embedded
 images export to content-named companion PNGs. SketchUp's bottom-up UVQ V is
 converted to the bridge's image convention after division by Q, for both direct
 face textures and inherited projections. Inherited texture mapping is a
@@ -170,7 +183,7 @@ Ruby syntax must remain compatible with Ruby 2.2 even though deployed only to
 are not implementation sources. Do not modify Kitchen Crafter or the official
 `d5_converter` extension while developing this plugin.
 
-Known limits: front-side materials only, transparency/glass, image entities,
+Known limits: different materials on both sides of one face, transparency/glass, image entities,
 face-me billboards, cutting-component holes, section cuts, two-point camera
 shift and exact inherited/projected texture appearance. Live orthographic and
 large-model behavior need visual acceptance. The private D5 API may change.
@@ -296,6 +309,20 @@ orientation, and confirms capture leaves the model unchanged. All twenty native
 Python worker checks pass with the matching Python 3.13 runtime. The UV fix is
 deployed to both 2026 and 2027; this live material review was performed in 2026.
 Glass/transparency and exact arbitrary inherited/projected mapping remain limits.
+
+On 2 November 2026, the Tennis model exposed a back-only material omission:
+the downward-facing court had green paint on its back faces and no front or
+container paint, so the exporter sent default white. The exporter now falls
+back to back paint, reverses the exported winding/normals for that side, and
+samples back UVQ for directly assigned textures. Front and container paint
+retain priority. SketchUp 2027 native acceptance passed twelve checks, including
+positioned back textures, mirrored nonuniform placement and material priority;
+the source model, materials and camera were restored. All 28 Python worker
+checks passed, and the actual court capture converted to a native offline D5
+export. Both 2026 and 2027 received the fix. A live update of the existing Tennis
+link in D5 visually restored both court greens and white lines without modifying
+or saving the source model. This remains a single-material-per-face export;
+different front and back paints cannot both be represented on the same face.
 
 To reproduce the visual fixture, first run
 `python scripts/generate_material_atlas.py`, then load

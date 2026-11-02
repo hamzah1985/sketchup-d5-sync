@@ -3,6 +3,11 @@ require 'json'
 require 'fileutils'
 Sketchup.require(File.expand_path('../bogdan_d5_sync/scene', __dir__)) unless defined?(BogdanD5Sync::Scene)
 model = Sketchup.active_model
+# Keep temporary acceptance edits out of a connected controller's transaction
+# bookkeeping. Abort/camera restoration can emit deferred observer callbacks.
+controller = defined?(BogdanD5Sync::Controller) ? BogdanD5Sync.controller : nil
+observer = controller && controller.instance_variable_get(:@model) == model ? controller.instance_variable_get(:@observer) : nil
+raise 'Finish the active modeling operation before acceptance' if observer && controller.instance_variable_get(:@operation_active)
 original_count = model.entities.length
 original_materials = model.materials.length
 original_modified = model.modified?
@@ -26,6 +31,7 @@ original_camera.image_width = saved_camera.image_width
 output = File.join(ENV['LOCALAPPDATA'], 'BogdanD5Sync', 'acceptance')
 FileUtils.mkdir_p(output)
 checks = []
+model.remove_observer(observer) if observer
 model.start_operation('Verify D5 Sync Export', true)
 begin
   group = model.entities.add_group
@@ -87,6 +93,51 @@ begin
   hidden = BogdanD5Sync::Scene.new(model, folder).capture
   raise 'Hidden parent leaked' if hidden['objects'].any? { |o| o['id'].start_with?(group.persistent_id.to_s + '/') }
   checks << 'Hidden containers excluded'
+  reversed = model.entities.add_group
+  back_face = reversed.entities.add_face([0,0,0], [2.m,0,0], [2.m,1.m,0], [0,1.m,0])
+  back_face.reverse! if back_face.normal.z > 0
+  back_face.back_material = material
+  back_face.position_material(material,
+    [Geom::Point3d.new(0,0,0), Geom::Point3d.new(0.1,0.2,0),
+     Geom::Point3d.new(2.m,0,0), Geom::Point3d.new(0.9,0.2,0),
+     Geom::Point3d.new(0,1.m,0), Geom::Point3d.new(0.1,0.7,0)], false)
+  source_normal = back_face.normal.to_a
+  back_helper = back_face.get_UVHelper(false, true)
+  back_points = back_face.mesh(5).points
+  back_expected = back_points.map do |point|
+    uvq = back_helper.get_back_UVQ(point)
+    [uvq.x / uvq.z, 1.0 - uvq.y / uvq.z]
+  end
+  [Geom::Transformation.new, Geom::Transformation.scaling(ORIGIN, -2, 3, 0.5)].each do |placement|
+    reversed.transformation = placement
+    back_scene = BogdanD5Sync::Scene.new(model, folder).capture
+    exported = back_scene['objects'].find { |o| o['id'].start_with?(reversed.persistent_id.to_s + '/') }
+    raise 'Back-only material missing' unless exported && exported['material_id'] == texture_material['id']
+    raise 'Back-side UVQ lost' unless exported['uvs'].zip(back_expected).all? do |actual, expected|
+      actual.zip(expected).all? { |a,b| (a-b).abs < 1e-8 }
+    end
+    raise 'Back-side normal is not facing the painted side' unless exported['normals'].all? { |n| n[2] > 0.99 }
+    exported['triangles'].each do |triangle|
+      points = triangle.map { |i| Geom::Point3d.new(exported['vertices'][i]) }
+      cross = (points[1] - points[0]).cross(points[2] - points[0])
+      raise 'Back-side winding disagrees with normal' unless cross.dot(Geom::Vector3d.new(exported['normals'][triangle[0]])) > 0
+    end
+  end
+  checks << 'Back-only texture uses back UVQ and painted-side normals/winding, including mirrored nonuniform placement'
+  paint = model.materials.add('D5 temporary parent paint')
+  paint.color = Sketchup::Color.new(30,100,50)
+  reversed.material = paint
+  inherited_scene = BogdanD5Sync::Scene.new(model, folder).capture
+  exported = inherited_scene['objects'].find { |o| o['id'].start_with?(reversed.persistent_id.to_s + '/') }
+  raise 'Container paint must precede back paint' unless exported['material_id'] == 'material-' + paint.entityID.to_s
+  raise 'Container priority incorrectly reversed normals' unless exported['normals'].all? { |n| n[2] < -0.99 }
+  back_face.material = paint
+  reversed.material = material
+  front_scene = BogdanD5Sync::Scene.new(model, folder).capture
+  exported = front_scene['objects'].find { |o| o['id'].start_with?(reversed.persistent_id.to_s + '/') }
+  raise 'Front paint must precede container/back paint' unless exported['material_id'] == 'material-' + paint.entityID.to_s
+  raise 'Capture changed source face paint or normal' unless back_face.material == paint && back_face.back_material == material && back_face.normal.to_a == source_normal
+  checks << 'Front/container/back priority and read-only face orientation'
   camera = Sketchup::Camera.new([2.m,3.m,4.m], [2.m,4.m,4.m], [0,0,1])
   camera.fov = 60
   model.active_view.camera = camera
@@ -104,6 +155,7 @@ begin
 ensure
   model.abort_operation
   model.active_view.camera = original_camera
+  model.add_observer(observer) if observer
 end
 raise 'Model changed during read-only acceptance' unless model.entities.length == original_count && model.materials.length == original_materials && model.modified? == original_modified
 restored_pose = BogdanD5Sync::Scene.camera(model.active_view)
